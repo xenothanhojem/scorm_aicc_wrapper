@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SynrgiseLearn AICC SCORM Course Launcher</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+    <script src="scorm_api.js"></script>
+</head>
+<body class="bg-light">
+    <div class="container mt-5">
+        <div id="courseInfo" class="card mb-4">
+            <div class="card-body">
+                <h2 class="card-title" id="courseTitle"></h2>
+                <p class="card-text" id="courseDescription"></p>
+            </div>
+        </div>
+        <button id="launchButton" class="btn btn-primary btn-lg" style="display: none;">Launch Course</button>
+        <div id="launchArea" class="mt-3"></div>
+    </div>
+
+    <script>
+        const courseInfo = document.getElementById('courseInfo');
+        const courseTitle = document.getElementById('courseTitle');
+        const courseDescription = document.getElementById('courseDescription');
+        const launchButton = document.getElementById('launchButton');
+        const launchArea = document.getElementById('launchArea');
+        let auConfig;
+        let config;
+
+        // Initialize SCORM
+        const scorm = pipwerks.SCORM;
+        scorm.version = "1.2";
+        
+        document.addEventListener('DOMContentLoaded', initializeLauncher);
+        launchButton.addEventListener('click', () => launchCourse(auConfig));
+
+        async function initializeLauncher() {
+            try {
+                config = await fetchConfig();
+                const zipFile = await fetchZipFile(config.zipFilePath);
+                const zipContents = await readZipFile(zipFile);
+                const auFile = findAUFile(zipContents);
+                const desFile = findDESFile(zipContents);
+                if (auFile && desFile) {
+                    auConfig = parseAUFile(zipContents[auFile]);
+                    const desConfig = parseDESFile(zipContents[desFile]);
+                    displayCourseInfo(desConfig);
+                    launchButton.style.display = 'block';
+                } else {
+                    showError('Required .au or .des file not found in the zip package.');
+                }
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function fetchConfig() {
+            const response = await fetch('config.json');
+            if (!response.ok) {
+                throw new Error('Failed to fetch config file.');
+            }
+            return await response.json();
+        }
+
+        async function fetchZipFile(zipFilePath) {
+            const response = await fetch(zipFilePath);
+            if (!response.ok) {
+                throw new Error('Failed to fetch the AICC course zip file.');
+            }
+            return await response.blob();
+        }
+
+        async function readZipFile(file) {
+            const zip = await JSZip.loadAsync(file);
+            const contents = {};
+            for (const [filename, file] of Object.entries(zip.files)) {
+                if (!file.dir) {
+                    contents[filename] = await file.async('string');
+                }
+            }
+            return contents;
+        }
+
+        function findAUFile(contents) {
+            return Object.keys(contents).find(filename => filename.toLowerCase().endsWith('.au'));
+        }
+
+        function findDESFile(contents) {
+            return Object.keys(contents).find(filename => filename.toLowerCase().endsWith('.des'));
+        }
+
+        function parseAUFile(content) {
+            const lines = content.trim().split('\n');
+            const headers = lines[0].replace(/"/g, '').split(',');
+            const values = lines[1].replace(/"/g, '').split(',');
+            return headers.reduce((obj, header, index) => {
+                obj[header] = values[index];
+                return obj;
+            }, {});
+        }
+
+        function parseDESFile(content) {
+            const lines = content.trim().split('\n');
+            const headers = lines[0].replace(/"/g, '').split(',');
+            const values = lines[1].replace(/"/g, '').split(',');
+            return headers.reduce((obj, header, index) => {
+                obj[header] = values[index];
+                return obj;
+            }, {});
+        }
+
+        function displayCourseInfo(desConfig) {
+            courseTitle.textContent = desConfig.Title;
+            courseDescription.textContent = desConfig.Description;
+        }
+
+        async function launchCourse(auConfig) {
+            const sessionId = generateSessionId();
+            const launchParams = new URLSearchParams(auConfig.Web_Launch);
+            launchParams.set('AICC_URL', config.AICC_URL+'/aicc-webhook');
+            launchParams.set('AICC_SID', sessionId);
+
+            // Initialize SCORM
+            if (scorm.connection.initialize()) {
+                console.log("SCORM initialized successfully");
+            } else {
+                console.error("SCORM initialization failed");
+            }
+
+            // Gather SCORM data
+            const scormData = {
+                student_id: scorm.get("cmi.core.student_id"),
+                student_name: scorm.get("cmi.core.student_name"),
+                lesson_location: scorm.get("cmi.core.lesson_location"),
+                credit: scorm.get("cmi.core.credit"),
+                lesson_status: scorm.get("cmi.core.lesson_status"),
+                entry: scorm.get("cmi.core.entry"),
+                score: scorm.get("cmi.core.score.raw"),
+                total_time: scorm.get("cmi.core.total_time"),
+                lesson_mode: scorm.get("cmi.core.lesson_mode"),
+                exit: "",
+                session_time: "0000:00:00"
+            };
+
+            // Prepare session data
+            const sessionData = {
+                session_id: sessionId,
+                ...scormData,
+                course_id: auConfig.Course_ID || '',
+                mastery_score: scorm.get("cmi.student_data.mastery_score") || '80',
+                source_url: window.location.hostname
+            };
+
+            try {
+                const response = await fetch(config.AICC_URL + '/store-session-data', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(sessionData),
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to store session data');
+                }
+
+                const launchUrl = `${auConfig.File_Name}?${launchParams.toString()}`;
+                
+                const newWindow = window.open(launchUrl, '_blank', 'width=1280,height=768');
+                if (newWindow) {
+                    showMessage('Course launched in a new window. If it doesn\'t open, please check your pop-up blocker.');
+                    
+                    // Set up event listener for when the course window closes
+                    const checkWindowClosed = setInterval(() => {
+                        if (newWindow.closed) {
+                            clearInterval(checkWindowClosed);
+                            handleCourseCompletion(sessionId);
+                        }
+                    }, 1000);
+                } else {
+                    showError('Unable to open new window. Please check your pop-up blocker and try again.');
+                }
+            } catch (error) {
+                showError(`Error launching course: ${error.message}`);
+            }
+        }
+
+        async function handleCourseCompletion(sessionId) {
+            // Gather final SCORM data
+            // const finalScormData = {
+            //     lesson_status: scorm.get("cmi.core.lesson_status"),
+            //     score: scorm.get("cmi.core.score.raw"),
+            //     session_time: scorm.get("cmi.core.session_time"),
+            //     exit: scorm.get("cmi.core.exit")
+            // };
+
+            // // Update session data with final SCORM data
+            // try {
+            //     const response = await fetch(config.AICC_URL + '/store-session-data', {
+            //         method: 'POST',
+            //         headers: {
+            //             'Content-Type': 'application/json',
+            //         },
+            //         body: JSON.stringify({
+            //             session_id: sessionId,
+            //             ...finalScormData
+            //         }),
+            //     });
+
+            //     if (!response.ok) {
+            //         throw new Error('Failed to update session data');
+            //     }
+
+            //     console.log('Session data updated successfully');
+            // } catch (error) {
+            //     console.error('Error updating session data:', error);
+            // }
+
+            // Terminate SCORM session
+            if (scorm.connection.terminate()) {
+                console.log("SCORM connection terminated successfully");
+            } else {
+                console.error("SCORM termination failed");
+            }
+        }
+
+        function generateSessionId() {
+            return 'SESSION_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        function showError(message) {
+            launchArea.innerHTML = `<div class="alert alert-danger" role="alert">${message}</div>`;
+        }
+
+        function showMessage(message) {
+            launchArea.innerHTML = `<div class="alert alert-info" role="alert">${message}</div>`;
+        }
+    </script>
+</body>
+</html>

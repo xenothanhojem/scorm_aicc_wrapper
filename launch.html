@@ -188,41 +188,51 @@
         }
 
         async function handleCourseCompletion(sessionId) {
-            // Gather final SCORM data
-            // const finalScormData = {
-            //     lesson_status: scorm.get("cmi.core.lesson_status"),
-            //     score: scorm.get("cmi.core.score.raw"),
-            //     session_time: scorm.get("cmi.core.session_time"),
-            //     exit: scorm.get("cmi.core.exit")
-            // };
+            try {
+                // Fetch session data from the new endpoint
+                const response = await fetch(`${config.AICC_URL}/get-session-data/${sessionId}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch session data');
+                }
+                const sessionData = await response.json();
 
-            // // Update session data with final SCORM data
-            // try {
-            //     const response = await fetch(config.AICC_URL + '/store-session-data', {
-            //         method: 'POST',
-            //         headers: {
-            //             'Content-Type': 'application/json',
-            //         },
-            //         body: JSON.stringify({
-            //             session_id: sessionId,
-            //             ...finalScormData
-            //         }),
-            //     });
+                // Check if SCORM API is available
+                if (typeof scorm === 'undefined' || !scorm.isAvailable()) {
+                    console.error('SCORM API is not available');
+                    return;
+                }
 
-            //     if (!response.ok) {
-            //         throw new Error('Failed to update session data');
-            //     }
+                // Set score if available
+                if (sessionData.score) {
+                    scorm.set("cmi.core.score.raw", sessionData.score);
+                }
 
-            //     console.log('Session data updated successfully');
-            // } catch (error) {
-            //     console.error('Error updating session data:', error);
-            // }
+                // Set lesson status if available
+                if (sessionData.lesson_status) {
+                    scorm.set("cmi.core.lesson_status", sessionData.lesson_status);
+                }
 
-            // Terminate SCORM session
-            if (scorm.connection.terminate()) {
-                console.log("SCORM connection terminated successfully");
-            } else {
-                console.error("SCORM termination failed");
+                // Set session time if available
+                if (sessionData.session_time) {
+                    scorm.set("cmi.core.session_time", sessionData.session_time);
+                }
+
+                // Commit the data
+                if (scorm.save()) {
+                    console.log("SCORM data saved successfully");
+                } else {
+                    console.error("Failed to save SCORM data");
+                }
+
+                // Terminate SCORM session
+                if (scorm.quit()) {
+                    console.log("SCORM connection terminated successfully");
+                } else {
+                    console.error("SCORM termination failed");
+                }
+
+            } catch (error) {
+                console.error('Error handling course completion:', error);
             }
         }
 

@@ -144,8 +144,22 @@ app.post('/create-scorm-package', upload.single('aiccZip'), async (req, res) => 
             return obj;
         }, {});
 
+        // Clean up the title for use in file names and manifest
+        const cleanTitle = desConfig.Title
+            .replace(/&/g, 'and')
+            .replace(/[^a-zA-Z0-9_\s-]/g, '')
+            .trim()
+            .replace(/\s+/g, '_');
+
+
+        const manifestTitle = desConfig.Title
+            .replace(/&/g, 'and')
+            .replace(/[^a-zA-Z0-9_\s-]/g, '')
+            .trim();
+
         // Create config.json
         const config = {
+            "zipFilePath": "aicc/course.zip",
             "AICC_URL": AICC_URL
         };
         fs.writeFileSync(path.join(workDir, 'config.json'), JSON.stringify(config, null, 2));
@@ -199,9 +213,9 @@ app.post('/create-scorm-package', upload.single('aiccZip'), async (req, res) => 
   </metadata>
   <organizations default="default_org">
     <organization identifier="default_org">
-      <title>${desConfig.Title}</title>
+      <title>${manifestTitle}</title>
       <item identifier="item_1" identifierref="resource_1">
-        <title>${desConfig.Title}</title>
+        <title>${manifestTitle}</title>
       </item>
     </organization>
   </organizations>
@@ -228,7 +242,7 @@ app.post('/create-scorm-package', upload.single('aiccZip'), async (req, res) => 
             }
         });
 
-        const outputPath = path.join(__dirname, 'scorm_packages', `${desConfig.Title.replace(/\s+/g, '_')}_SCORM.zip`);
+        const outputPath = path.join(__dirname, 'scorm_packages', `${cleanTitle}_SCORM.zip`);
         scormZip.writeZip(outputPath);
 
         // Send the file
@@ -309,31 +323,64 @@ app.post('/aicc-webhook', async (req, res) => {
 
                 // Constructing GetParam response using stored session data
                 res.send(`error=0
-error_text=Successful
-aicc_data=
-[Core]
-Student_ID=${sessionData.student_id || ''}
-Student_Name=${sessionData.student_name || ''}
-Lesson_Location=${sessionData.lesson_location || ''}
-Credit=${sessionData.credit || ''}
-Lesson_Status=${sessionData.lesson_status || ''}
-Score=${sessionData.score || ''}
-Time=${sessionData.session_time || ''}
-Lesson_Mode=${sessionData.lesson_mode || ''}
-[Core_Lesson]
-[Core_Vendor]
-[Evaluation]
-Course_ID=${sessionData.course_id || ''}
-[Student_Data]
-Mastery_Score=${sessionData.mastery_score || ''}`);
+                    error_text=Successful
+                    aicc_data=
+                    [Core]
+                    Student_ID=${sessionData.student_id || ''}
+                    Student_Name=${sessionData.student_name || ''}
+                    Lesson_Location=${sessionData.lesson_location || ''}
+                    Credit=${sessionData.credit || ''}
+                    Lesson_Status=${sessionData.lesson_status || ''}
+                    Score=${sessionData.score || ''}
+                    Time=${sessionData.session_time || ''}
+                    Lesson_Mode=${sessionData.lesson_mode || ''}
+                    [Core_Lesson]
+                    [Core_Vendor]
+                    [Evaluation]
+                    Course_ID=${sessionData.course_id || ''}
+                    [Student_Data]
+                    Mastery_Score=${sessionData.mastery_score || ''}`);
             } catch (error) {
                 console.error('Error reading session data:', error);
                 res.status(500).send('Error retrieving session data');
             }
             break;
         case 'putparam':
-            console.log('Saving AICC data:', req.body);
-            res.send('AICC_RESULT=OK');
+            try {
+                const { session_id, aicc_data } = req.body;
+                if (!session_id) {
+                    return res.status(400).send('AICC_RESULT=ERROR\nERROR_MESSAGE=Missing session_id');
+                }
+
+                // Parse AICC data
+                const parsedData = parseAICCData(aicc_data);
+
+                // Prepare the update query
+                const query = `
+                    UPDATE sessions SET
+                    lesson_location = ?,
+                    lesson_status = ?,
+                    score = ?,
+                    session_time = ?
+                    WHERE session_id = ?
+                `;
+
+                const params = [
+                    parsedData.lesson_location,
+                    parsedData.lesson_status,
+                    parsedData.score,
+                    parsedData.time,
+                    session_id
+                ];
+
+                await pool.query(query, params);
+
+                console.log('AICC data saved successfully');
+                res.send('AICC_RESULT=OK');
+            } catch (error) {
+                console.error('Error saving AICC data:', error);
+                res.status(500).send('AICC_RESULT=ERROR\nERROR_MESSAGE=Database error');
+            }
             break;
         case 'putinteractions':
             console.log('Saving interaction data:', req.body);
@@ -345,6 +392,58 @@ Mastery_Score=${sessionData.mastery_score || ''}`);
             break;
         default:
             res.status(400).send('AICC_RESULT=ERROR\nERROR_MESSAGE=Unknown command');
+    }
+});
+
+// Helper function to parse AICC data
+function parseAICCData(aiccData) {
+    const data = {};
+    const lines = aiccData.split('\r\n');
+    let currentSection = '';
+
+    for (const line of lines) {
+        if (line.trim() === '') continue;
+        if (line.startsWith('[') && line.endsWith(']')) {
+            currentSection = line.slice(1, -1).toLowerCase();
+        } else {
+            const [key, value] = line.split('=').map(s => s.trim());
+            if (currentSection === 'core') {
+                data[key.toLowerCase()] = value;
+            }
+        }
+    }
+
+    return data;
+}
+
+// New endpoint to retrieve session data as JSON
+app.get('/get-session-data/:session_id', async (req, res) => {
+    const { session_id } = req.params;
+
+    if (!session_id) {
+        return res.status(400).json({ error: 'Session ID is required' });
+    }
+
+    try {
+        const [rows] = await pool.query('SELECT * FROM sessions WHERE session_id = ?', [session_id]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        const sessionData = rows[0];
+
+        // Convert any null values to empty strings
+        Object.keys(sessionData).forEach(key => {
+            if (sessionData[key] === null) {
+                sessionData[key] = '';
+            }
+        });
+
+        res.json(sessionData);
+    } catch (error) {
+        console.error('Error retrieving session data:', error);
+        res.status(500).json({ error: 'Error retrieving session data' });
     }
 });
 

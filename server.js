@@ -354,6 +354,23 @@ Mastery_Score=${sessionData.mastery_score || ''}`);
 
                 // Parse AICC data
                 const parsedData = parseAICCData(aicc_data);
+                console.log('Parsed AICC data:', parsedData);
+
+                // Transform lesson_status
+                if (parsedData.lesson_status) {
+                    switch (parsedData.lesson_status.toLowerCase()) {
+                        case 'completed':
+                        case 'c':
+                            parsedData.lesson_status = 'completed';
+                            break;
+                        case 'incomplete':
+                        case 'i':
+                            parsedData.lesson_status = 'incomplete';
+                            break;
+                        default:
+                            parsedData.lesson_status = 'incomplete';
+                    }
+                }
 
                 // Prepare the update query
                 const query = `
@@ -364,14 +381,16 @@ Mastery_Score=${sessionData.mastery_score || ''}`);
                     session_time = ?
                     WHERE session_id = ?
                 `;
-
+                
                 const params = [
-                    parsedData.lesson_location,
-                    parsedData.lesson_status,
-                    parsedData.score,
-                    parsedData.time,
+                    parsedData.lesson_location || '',
+                    parsedData.lesson_status || 'incomplete',
+                    parsedData.score || '',
+                    parsedData.time || '',
                     session_id
                 ];
+
+                console.log('Query params:', params);
 
                 await pool.query(query, params);
 
@@ -398,17 +417,27 @@ Mastery_Score=${sessionData.mastery_score || ''}`);
 // Helper function to parse AICC data
 function parseAICCData(aiccData) {
     const data = {};
-    const lines = aiccData.split('\r\n');
+    // Split on both \r\n and \n
+    const lines = aiccData.split(/\r?\n/);
     let currentSection = '';
 
     for (const line of lines) {
         if (line.trim() === '') continue;
         if (line.startsWith('[') && line.endsWith(']')) {
-            currentSection = line.slice(1, -1).toLowerCase();
+            currentSection = line.slice(1, -1).toUpperCase();
         } else {
-            const [key, value] = line.split('=').map(s => s.trim());
-            if (currentSection === 'core') {
+            const [key, ...valueParts] = line.split('=');
+            const value = valueParts.join('=').trim();
+            if (currentSection === 'CORE') {
                 data[key.toLowerCase()] = value;
+            } else if (currentSection === 'CORE_LESSON') {
+                try {
+                    data.core_lesson = JSON.parse(value);
+                } catch (e) {
+                    console.error('Error parsing CORE_LESSON JSON:', e);
+                    // Store as string if JSON parsing fails
+                    data.core_lesson = value;
+                }
             }
         }
     }

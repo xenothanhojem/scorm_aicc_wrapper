@@ -207,7 +207,7 @@
 
                 // Transform lesson status
                 if (sessionData.lesson_status) {
-                    const scormLessonStatus = sessionData.lesson_status.toLowerCase() === 'complete' ? 'completed' : 'incomplete';
+                    const scormLessonStatus = sessionData.lesson_status.toLowerCase() === 'completed' ? 'completed' : 'incomplete';
                     scorm.set("cmi.core.lesson_status", scormLessonStatus);
                 }
 

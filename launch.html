@@ -189,42 +189,46 @@
 
         async function handleCourseCompletion(sessionId) {
             try {
-                // Fetch session data from the new endpoint
                 const response = await fetch(`${config.AICC_URL}/get-session-data/${sessionId}`);
                 if (!response.ok) {
                     throw new Error('Failed to fetch session data');
                 }
                 const sessionData = await response.json();
 
-                // Check if SCORM API is available
                 if (typeof scorm === 'undefined' || !scorm.isAvailable()) {
                     console.error('SCORM API is not available');
                     return;
                 }
 
-                // Set score if available
-                if (sessionData.score) {
-                    scorm.set("cmi.core.score.raw", sessionData.score);
-                }
-
-                // Set lesson status if available
+                // Transform lesson status
                 if (sessionData.lesson_status) {
-                    scorm.set("cmi.core.lesson_status", sessionData.lesson_status);
+                    const scormLessonStatus = sessionData.lesson_status.toLowerCase() === 'complete' ? 'completed' : 'incomplete';
+                    scorm.set("cmi.core.lesson_status", scormLessonStatus);
                 }
 
-                // Set session time if available
+                // Transform score
+                if (sessionData.score) {
+                    const [rawScore, maxScore] = sessionData.score.split(',').map(Number);
+                    if (!isNaN(rawScore)) {
+                        scorm.set("cmi.core.score.raw", rawScore.toString());
+                    }
+                    if (!isNaN(maxScore)) {
+                        scorm.set("cmi.core.score.max", maxScore.toString());
+                    }
+                }
+
+                // Transform session time
                 if (sessionData.session_time) {
-                    scorm.set("cmi.core.session_time", sessionData.session_time);
+                    const scormTime = convertAICCTimeToSCORM(sessionData.session_time);
+                    scorm.set("cmi.core.session_time", scormTime);
                 }
 
-                // Commit the data
                 if (scorm.save()) {
                     console.log("SCORM data saved successfully");
                 } else {
                     console.error("Failed to save SCORM data");
                 }
 
-                // Terminate SCORM session
                 if (scorm.quit()) {
                     console.log("SCORM connection terminated successfully");
                 } else {
@@ -234,6 +238,25 @@
             } catch (error) {
                 console.error('Error handling course completion:', error);
             }
+        }
+
+        function convertAICCTimeToSCORM(aiccTime) {
+            const [centiseconds, additionalTime] = aiccTime.split(',');
+            const [additionalMinutes, additionalSeconds] = additionalTime.split(':').map(Number);
+
+            // Convert centiseconds to seconds
+            let totalSeconds = Math.floor(Number(centiseconds) / 100);
+
+            // Add additional time
+            totalSeconds += additionalMinutes * 60 + additionalSeconds;
+
+            // Convert to hours, minutes, seconds
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+
+            // Format as SCORM time (HH:MM:SS)
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
         }
 
         function generateSessionId() {

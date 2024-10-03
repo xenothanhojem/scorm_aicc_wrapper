@@ -323,23 +323,23 @@ app.post('/aicc-webhook', async (req, res) => {
 
                 // Constructing GetParam response using stored session data
                 res.send(`error=0
-                    error_text=Successful
-                    aicc_data=
-                    [Core]
-                    Student_ID=${sessionData.student_id || ''}
-                    Student_Name=${sessionData.student_name || ''}
-                    Lesson_Location=${sessionData.lesson_location || ''}
-                    Credit=${sessionData.credit || ''}
-                    Lesson_Status=${sessionData.lesson_status || ''}
-                    Score=${sessionData.score || ''}
-                    Time=${sessionData.session_time || ''}
-                    Lesson_Mode=${sessionData.lesson_mode || ''}
-                    [Core_Lesson]
-                    [Core_Vendor]
-                    [Evaluation]
-                    Course_ID=${sessionData.course_id || ''}
-                    [Student_Data]
-                    Mastery_Score=${sessionData.mastery_score || ''}`);
+error_text=Successful
+aicc_data=
+[Core]
+Student_ID=${sessionData.student_id || ''}
+Student_Name=${sessionData.student_name || ''}
+Lesson_Location=${sessionData.lesson_location || ''}
+Credit=${sessionData.credit || ''}
+Lesson_Status=${sessionData.lesson_status || ''}
+Score=${sessionData.score || ''}
+Time=${sessionData.session_time || ''}
+Lesson_Mode=${sessionData.lesson_mode || ''}
+[Core_Lesson]
+[Core_Vendor]
+[Evaluation]
+Course_ID=${sessionData.course_id || ''}
+[Student_Data]
+Mastery_Score=${sessionData.mastery_score || ''}`);
             } catch (error) {
                 console.error('Error reading session data:', error);
                 res.status(500).send('Error retrieving session data');

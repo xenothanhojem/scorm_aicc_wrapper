@@ -28,6 +28,8 @@
         const launchArea = document.getElementById('launchArea');
         let auConfig;
         let config;
+        let sessionStartTime;
+        let sessionDuration = 0;
 
         // Initialize SCORM
         const scorm = pipwerks.SCORM;
@@ -117,6 +119,7 @@
         }
 
         async function launchCourse(auConfig) {
+            startSessionTimer();
             const sessionId = generateSessionId();
             const launchParams = new URLSearchParams(auConfig.Web_Launch);
             launchParams.set('AICC_URL', config.AICC_URL+'/aicc-webhook');
@@ -189,6 +192,8 @@
 
         async function handleCourseCompletion(sessionId) {
             try {
+                stopSessionTimer(); // Stop the timer when the course completes
+
                 const response = await fetch(`${config.AICC_URL}/get-session-data/${sessionId}`);
                 if (!response.ok) {
                     throw new Error('Failed to fetch session data');
@@ -217,11 +222,9 @@
                     }
                 }
 
-                // Transform session time
-                if (sessionData.session_time) {
-                    const scormTime = convertAICCTimeToSCORM(sessionData.session_time);
-                    scorm.set("cmi.core.session_time", scormTime);
-                }
+                // Set session time using our internal timer
+                const scormTime = getSessionTime();
+                scorm.set("cmi.core.session_time", scormTime);
 
                 if (scorm.save()) {
                     console.log("SCORM data saved successfully");
@@ -269,6 +272,32 @@
 
         function showMessage(message) {
             launchArea.innerHTML = `<div class="alert alert-info" role="alert">${message}</div>`;
+        }
+
+        function startSessionTimer() {
+            sessionStartTime = new Date();
+        }
+
+        function stopSessionTimer() {
+            if (sessionStartTime) {
+                const endTime = new Date();
+                sessionDuration += (endTime - sessionStartTime) / 1000; // Convert to seconds
+                sessionStartTime = null;
+            }
+        }
+
+        function getSessionTime() {
+            let totalSeconds = Math.round(sessionDuration);
+            if (sessionStartTime) {
+                const currentTime = new Date();
+                totalSeconds += Math.round((currentTime - sessionStartTime) / 1000);
+            }
+            
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
         }
     </script>
 </body>
